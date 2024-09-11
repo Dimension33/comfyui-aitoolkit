@@ -102,7 +102,8 @@ RUN aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
 COPY --chown=dimension:dimension init.sh /workspace/ai-dock/bin/init.sh
 COPY --chown=dimension:dimension comfyui.ipynb /workspace/ai-dock/jupyter/comfyui.ipynb
 COPY --chown=dimension:dimension run_aitoolkit_ui.sh /workspace/ai-toolkit/run_aitoolkit_ui.sh
+COPY --chown=dimension:dimension runpod-entrypoint.sh /workspace/runpod-entrypoint.sh
 
 EXPOSE 8888 7860 38188 8111
 
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+ENTRYPOINT ["/bin/bash", "/workspace/runpod-entrypoint.sh"]
