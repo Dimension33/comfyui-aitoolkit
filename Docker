@@ -1,0 +1,108 @@
+FROM runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04
+
+ENV PATH="/home/dimension/.local/bin:${PATH}"
+ENV JUPYTER_DATA_DIR=/workspace/.jupyter
+ENV WORKSPACE=/workspace
+ENV COMFYUI_VENV=/workspace/environments/python/comfyui
+ENV COMFYUI_VENV_PYTHON=${COMFYUI_VENV}/bin/python
+ENV COMFYUI_VENV_PIP=${COMFYUI_VENV}/bin/pip
+ENV API_VENV=/workspace/environments/python/api
+ENV API_VENV_PYTHON=${API_VENV}/bin/python
+ENV API_VENV_PIP=${API_VENV}/bin/pip
+ENV AITOOLKIT_VENV=/workspace/environments/python/aitoolkit
+ENV AITOOLKIT_VENV_PYTHON=${AITOOLKIT_VENV}/bin/python
+ENV AITOOLKIT_VENV_PIP=${AITOOLKIT_VENV}/bin/pip
+ENV PYTORCH_VERSION=2.2.1
+ENV CUDA_VERSION=12.1
+ENV HF_TOKEN=${HF_TOKEN:-}
+
+RUN adduser --disabled-password --gecos '' dimension && \
+    adduser dimension sudo && \
+    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+WORKDIR /workspace
+RUN mkdir -p /workspace/notebooks /workspace/.jupyter /workspace/ai-dock && \
+    chown -R dimension:dimension /workspace /home && \
+    chmod -R 777 /workspace /home
+
+RUN apt update -y && \
+    add-apt-repository -y ppa:git-core/ppa && \
+    apt update -y && \
+    apt install -y aria2 git git-lfs unzip ffmpeg python3.10-venv supervisor
+
+USER dimension
+
+# Set up Python virtual environments
+RUN python3.10 -m venv ${COMFYUI_VENV} && \
+    python3.10 -m venv ${API_VENV} && \
+    python3.10 -m venv ${AITOOLKIT_VENV}
+ENV PATH="${COMFYUI_VENV}/bin:${API_VENV}/bin:${AITOOLKIT_VENV}/bin:${PATH}"
+
+# Install Python packages for ComfyUI
+RUN ${COMFYUI_VENV_PIP} install --no-cache-dir torch==${PYTORCH_VERSION} torchvision torchaudio xformers \
+    --extra-index-url https://download.pytorch.org/whl/cu$(echo ${CUDA_VERSION} | cut -d'.' -f1,2 | tr -d '.') \
+    && ${COMFYUI_VENV_PIP} install --no-cache-dir opencv-python imageio imageio-ffmpeg ffmpeg-python av runpod \
+    einops diffusers transformers accelerate jupyter ipykernel ipywidgets
+
+RUN ${API_VENV_PIP} install --no-cache-dir fastapi uvicorn
+
+# Clone and set up ComfyUI
+RUN git clone https://github.com/comfyanonymous/ComfyUI /workspace/ComfyUI && \
+    cd /workspace/ComfyUI && \
+    ${COMFYUI_VENV_PIP} install -r requirements.txt
+
+# Install custom nodes for ComfyUI
+RUN mkdir -p /workspace/ComfyUI/custom_nodes && \
+    git clone https://github.com/ltdrdata/ComfyUI-Manager /workspace/ComfyUI/custom_nodes/ComfyUI-Manager && \
+    git clone https://github.com/cubiq/ComfyUI_essentials /workspace/ComfyUI/custom_nodes/ComfyUI_essentials && \
+    git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved /workspace/ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved && \
+    git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet /workspace/ComfyUI/custom_nodes/ComfyUI-Advanced-ControlNet && \
+    git clone https://github.com/SeargeDP/SeargeSDXL /workspace/ComfyUI/custom_nodes/SeargeSDXL
+
+# Set up AIToolkit
+RUN git clone https://github.com/ostris/ai-toolkit.git /workspace/ai-toolkit && \
+    cd /workspace/ai-toolkit && \
+    git submodule update --init --recursive && \
+    ${AITOOLKIT_VENV_PIP} install torch && \
+    ${AITOOLKIT_VENV_PIP} install -r requirements.txt
+
+# Set up model directories
+RUN mkdir -p /workspace/ComfyUI/models/{checkpoints,clip,vae}
+
+# Download models
+RUN aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors \
+    -d /workspace/ComfyUI/models/checkpoints -o sd_xl_base_1.0.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors \
+    -d /workspace/ComfyUI/models/checkpoints -o sd_xl_refiner_1.0.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors \
+    -d /workspace/ComfyUI/models/vae -o sdxl_vae.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors \
+    -d /workspace/ComfyUI/models/checkpoints -o flux1-dev.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors \
+    -d /workspace/ComfyUI/models/vae -o flux1-dev-ae.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/comfyanonymous/flux_text_encoders/raw/main/clip_l.safetensors \
+    -d /workspace/ComfyUI/models/clip -o clip_l.safetensors && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    --header="Authorization: Bearer ${HF_TOKEN}" \
+    https://huggingface.co/comfyanonymous/flux_text_encoders/raw/main/t5xxl_fp16.safetensors \
+    -d /workspace/ComfyUI/models/clip -o t5xxl_fp16.safetensors
+
+COPY --chown=dimension:dimension init.sh /workspace/ai-dock/bin/init.sh
+COPY --chown=dimension:dimension comfyui.ipynb /workspace/ai-dock/jupyter/comfyui.ipynb
+COPY --chown=dimension:dimension run_aitoolkit_ui.sh /workspace/ai-toolkit/run_aitoolkit_ui.sh
+
+EXPOSE 8888 7860 38188 8111
+
+ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

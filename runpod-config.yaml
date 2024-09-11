@@ -1,0 +1,10 @@
+docker:
+  image: runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04
+  env:
+    - HF_TOKEN=${HF_TOKEN}
+  ports:
+    - 8888
+    - 7860
+    - 38188
+    - 8111
+  cmd: bash /workspace/comfyui-aitoolkit/runpod-entrypoint.sh

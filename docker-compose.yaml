@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  comfyui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - HF_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8888:8888"
+      - "7860:7860"
+      - "38188:38188"
+      - "8111:8111"
+    volumes:
+      - /workspace:/workspace
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
